@@ -166,6 +166,11 @@ Action | Reason
     explanations = {}
 
     for line in raw.split("\n"):
+
+        # ✅ FIX: remove header row "Action | Reason"
+        if "Action" in line and "Reason" in line:
+            continue
+
         if "|" not in line:
             continue
 
