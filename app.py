@@ -65,7 +65,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Built by **Sahil Jain** 🚀")
 
-# Block app if API key invalid
+# Block usage until valid API key
 if not st.session_state.api_key_valid:
     st.info("Enter a valid OpenAI API key to continue.")
     st.stop()
@@ -231,6 +231,24 @@ if current_output:
             new_output = generate(output_key, opt)
             st.session_state.outputs[output_key] = new_output
             st.rerun()
+
+    # -------- CUSTOM REFINE INPUT --------
+    st.markdown("#### Or enter custom refinement")
+
+    custom_col1, custom_col2 = st.columns([4,1])
+
+    with custom_col1:
+        custom_refine = st.text_input(
+            "Custom refine request",
+            placeholder="e.g., Convert to OKRs, Add roadmap, Simplify language"
+        )
+
+    with custom_col2:
+        if st.button("Apply"):
+            if custom_refine.strip():
+                new_output = generate(output_key, custom_refine)
+                st.session_state.outputs[output_key] = new_output
+                st.rerun()
 
     # ---------------- EXPORT ----------------
     st.download_button(
