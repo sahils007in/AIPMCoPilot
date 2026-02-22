@@ -1,205 +1,315 @@
 import streamlit as st
 from openai import OpenAI
+import time
+import hashlib
 
-st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="AI PM Copilot", page_icon="🚀", layout="wide")
 
-# =========================
-# SESSION STATE
-# =========================
-if "api_valid" not in st.session_state:
-    st.session_state.api_valid=False
-
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab="Executive Summary"
-
-if "artifacts" not in st.session_state:
-    st.session_state.artifacts={
-        "Executive Summary":"",
-        "Action Items":"",
-        "PRD":"",
-        "User Stories":""
-    }
-
-if "suggestions" not in st.session_state:
-    st.session_state.suggestions=[]
-
-# =========================
-# SIDEBAR
-# =========================
-with st.sidebar:
-    st.title("⚙️ Configuration")
-    api_key=st.text_input("OpenAI API Key",type="password")
-    pm_role=st.selectbox("PM Role",["Startup PM","Growth PM","Enterprise PM"])
-    output_style=st.selectbox("Output Style",["Concise","Detailed"])
-
-    st.markdown("---")
-    st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
-
-# =========================
-# HEADER
-# =========================
 st.title("🚀 AI Product Manager Copilot")
-st.caption("AI Workspace for Product Managers")
+st.caption("AI Workspace for Product Managers — Intelligent Artifact Generation")
 
-# =========================
-# API VALIDATION
-# =========================
-def validate_key(key):
+# ---------------- SESSION STATE ----------------
+defaults = {
+    "client": None,
+    "api_key_valid": False,
+    "validated_key": None,
+    "outputs": {"summary":"","actions":"","prd":"","stories":""},
+    "active_view": "Executive Summary",
+    "suggestions": [],
+    "suggestion_explanations": {},
+    "memory": [],
+    "workflow_cache_key": None,
+    "workflow_advice": ""
+}
+
+for k,v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ---------------- API VALIDATION ----------------
+def validate_openai_api_key(key):
     try:
         OpenAI(api_key=key).models.list()
         return True
     except:
         return False
 
-if api_key and not st.session_state.api_valid:
-    with st.spinner("Validating API Key..."):
-        st.session_state.api_valid=validate_key(api_key)
+# ---------------- SIDEBAR ----------------
+with st.sidebar:
+    st.header("⚙ Configuration")
 
-if not api_key:
-    st.warning("🔑 Enter your OpenAI API key in sidebar.")
+    api_key = st.text_input("OpenAI API Key", type="password")
+
+    role = st.selectbox("PM Role",["Startup PM","Agile Coach","Technical PM"])
+    tone = st.selectbox("Output Style",["Concise","Detailed"])
+
+    if api_key and api_key != st.session_state.validated_key:
+        with st.spinner("Validating API key..."):
+            if validate_openai_api_key(api_key):
+                st.session_state.client = OpenAI(api_key=api_key)
+                st.session_state.api_key_valid = True
+                st.session_state.validated_key = api_key
+                st.success("✅ API key validated")
+            else:
+                st.session_state.api_key_valid = False
+                st.error("❌ Invalid API key")
+
+    st.markdown("---")
+    st.markdown("Built by **Sahil Jain** 🚀")
+
+if not st.session_state.api_key_valid:
+    st.info("Enter valid OpenAI API key to continue.")
     st.stop()
 
-if not st.session_state.api_valid:
-    st.error("❌ Invalid API key")
-    st.stop()
+client = st.session_state.client
 
-st.success("🟢 Connected to OpenAI")
-client=OpenAI(api_key=api_key)
+# ---------------- INPUT ----------------
+user_input = st.text_area("Paste meeting notes or product ideas", height=220)
+input_empty = not user_input.strip()
 
-# =========================
-# INPUT
-# =========================
-product_input=st.text_area(
-"📥 Paste Product Context (Idea, Notes, Transcript, or Any Raw Input)",
-height=200
-)
+# ---------------- MEMORY ----------------
+def get_memory_context():
+    if not st.session_state.memory:
+        return ""
+    return "\n\nPrevious Artifacts:\n" + "\n\n".join(st.session_state.memory)
 
-# =========================
-# AI CALL
-# =========================
-def ask_ai(prompt):
-    return client.chat.completions.create(
+def add_to_memory(content):
+    if content and content not in st.session_state.memory:
+        st.session_state.memory.append(content)
+
+# ---------------- PROMPT BUILDER ----------------
+def build_prompt(task, refine=None, existing=None):
+
+    if refine and existing:
+        return f"""
+Refine this output:
+
+{existing}
+
+Request:
+{refine}
+"""
+
+    base = f"""
+You are an expert Product Manager.
+
+PM Style: {role}
+Response Style: {tone}
+
+Input:
+{user_input}
+
+{get_memory_context()}
+"""
+
+    tasks = {
+        "summary":"Create executive summary.",
+        "actions":"Extract prioritized action items.",
+        "prd":"Create structured PRD (Problem, Users, Goals, Metrics, Features, Risks).",
+        "stories":"Generate Agile user stories with acceptance criteria."
+    }
+
+    return base + "\nTask:\n" + tasks[task]
+
+# ---------------- WORKFLOW COACH ----------------
+def get_workflow_advice():
+
+    state_hash = hashlib.md5(str(st.session_state.outputs).encode()).hexdigest()
+
+    if state_hash == st.session_state.workflow_cache_key:
+        return st.session_state.workflow_advice
+
+    generated = [k for k,v in st.session_state.outputs.items() if v]
+
+    prompt = f"""
+You are an AI workflow coach for Product Managers.
+
+Artifacts generated: {generated}
+
+Suggest ONE strategic next step in 1-2 sentences.
+"""
+
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}]
-    ).choices[0].message.content
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3
+    )
 
-# =========================
-# GENERATION
-# =========================
-def generate(type_name):
+    advice = response.choices[0].message.content
 
-    with st.spinner(f"Generating {type_name}..."):
+    st.session_state.workflow_cache_key = state_hash
+    st.session_state.workflow_advice = advice
 
-        result=ask_ai(f"""
-Act as senior product manager.
+    return advice
 
-Generate {type_name}.
+# ---------------- AI SUGGESTIONS ----------------
+def get_ai_suggestions(current_output):
 
-Role:{pm_role}
-Style:{output_style}
+    prompt = f"""
+Suggest EXACTLY 3 useful next refinement actions.
+Return format:
+Action | Reason
 
-Context:
-{product_input}
-""")
+{current_output}
+"""
 
-        st.session_state.artifacts[type_name]=result
-        st.session_state.active_tab=type_name
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3
+    )
 
-        # generate suggestions
-        suggestion_text=ask_ai(f"""
-Suggest 3 next PM actions with confidence (High/Medium/Low) and short reason.
+    raw = response.choices[0].message.content
 
-Context:
-{product_input}
-""")
+    suggestions = []
+    explanations = {}
 
-        st.session_state.suggestions=suggestion_text.split("\n")
-
-def generate_all():
-    for k in st.session_state.artifacts.keys():
-        generate(k)
-
-# =========================
-# BUTTON ROW
-# =========================
-col1,col2,col3,col4,col5=st.columns(5)
-
-with col1:
-    if st.button("🚀 Generate All"):
-        generate_all()
-
-with col2:
-    if st.button("Executive Summary"):
-        generate("Executive Summary")
-
-with col3:
-    if st.button("Action Items"):
-        generate("Action Items")
-
-with col4:
-    if st.button("PRD"):
-        generate("PRD")
-
-with col5:
-    if st.button("User Stories"):
-        generate("User Stories")
-
-# =========================
-# OUTPUT TABS
-# =========================
-if any(st.session_state.artifacts.values()):
-
-    st.markdown("---")
-
-    tabs=st.tabs(list(st.session_state.artifacts.keys()))
-
-    for i,key in enumerate(st.session_state.artifacts.keys()):
-        with tabs[i]:
-            if key==st.session_state.active_tab:
-                st.markdown(st.session_state.artifacts[key])
-
-# =========================
-# QUICK REFINE
-# =========================
-if st.session_state.artifacts[st.session_state.active_tab]:
-
-    st.subheader("Quick Refine")
-
-    r1,r2,r3,r4=st.columns(4)
-
-    if r1.button("Make concise"):
-        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
-            "Make concise:\n"+st.session_state.artifacts[st.session_state.active_tab])
-
-    if r2.button("Convert to OKRs"):
-        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
-            "Convert to OKRs:\n"+st.session_state.artifacts[st.session_state.active_tab])
-
-    if r3.button("Add risks"):
-        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
-            "Add risks section:\n"+st.session_state.artifacts[st.session_state.active_tab])
-
-    if r4.button("Make technical"):
-        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
-            "Make technical:\n"+st.session_state.artifacts[st.session_state.active_tab])
-
-# =========================
-# AI SUGGESTIONS
-# =========================
-if st.session_state.suggestions:
-
-    st.markdown("---")
-    st.subheader("🤖 AI Suggested Next Steps")
-
-    for s in st.session_state.suggestions:
-
-        if not s.strip():
+    for line in raw.split("\n"):
+        if "|" not in line:
             continue
 
-        confidence="⭐ Medium"
-        if "High" in s: confidence="⭐ High"
-        elif "Low" in s: confidence="⭐ Low"
+        action, reason = line.split("|",1)
 
-        clean=s.replace("High","").replace("Medium","").replace("Low","")
+        action = action.replace("Action:", "").replace("-", "").replace("•","").strip()
+        reason = reason.replace("Reason:", "").strip()
 
-        st.markdown(f"**{clean}** {confidence}")
+        if len(action) < 3:
+            continue
+
+        suggestions.append(action)
+        explanations[action] = reason
+
+    suggestions = list(dict.fromkeys(suggestions))
+
+    st.session_state.suggestions = suggestions[:3]
+    st.session_state.suggestion_explanations = explanations
+
+# ---------------- GENERATE ----------------
+def generate(task, refine=None):
+
+    existing = st.session_state.outputs[task] if refine else None
+    prompt = build_prompt(task, refine, existing)
+
+    start = time.time()
+
+    with st.spinner("Generating..."):
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"user","content":prompt}]
+        )
+
+    duration = round(time.time() - start, 2)
+    st.success(f"Generated in {duration}s")
+
+    result = res.choices[0].message.content
+
+    add_to_memory(result)
+    get_ai_suggestions(result)
+
+    return result
+
+# ---------------- GENERATE BUTTONS ----------------
+st.markdown("### Generate Artifacts")
+
+col0,col1,col2,col3,col4 = st.columns(5)
+
+with col0:
+    if st.button("🚀 Generate All", disabled=input_empty):
+        for key in ["summary","actions","prd","stories"]:
+            st.session_state.outputs[key] = generate(key)
+        st.session_state.active_view = "Executive Summary"
+        st.rerun()
+
+with col1:
+    if st.button("Executive Summary", disabled=input_empty):
+        st.session_state.outputs["summary"] = generate("summary")
+        st.session_state.active_view = "Executive Summary"
+        st.rerun()
+
+with col2:
+    if st.button("Action Items", disabled=input_empty):
+        st.session_state.outputs["actions"] = generate("actions")
+        st.session_state.active_view = "Action Items"
+        st.rerun()
+
+with col3:
+    if st.button("Generate PRD", disabled=input_empty):
+        st.session_state.outputs["prd"] = generate("prd")
+        st.session_state.active_view = "PRD"
+        st.rerun()
+
+with col4:
+    if st.button("User Stories", disabled=input_empty):
+        st.session_state.outputs["stories"] = generate("stories")
+        st.session_state.active_view = "User Stories"
+        st.rerun()
+
+# ---------------- WORKSPACE ----------------
+st.markdown("---")
+
+views = ["Executive Summary","Action Items","PRD","User Stories"]
+
+selected = st.radio("Workspace", views, horizontal=True,
+                    index=views.index(st.session_state.active_view))
+
+output_key = {
+    "Executive Summary":"summary",
+    "Action Items":"actions",
+    "PRD":"prd",
+    "User Stories":"stories"
+}[selected]
+
+current_output = st.session_state.outputs[output_key]
+
+# ---------------- WORKFLOW COACH DISPLAY ----------------
+if any(st.session_state.outputs.values()):
+    st.markdown("### 🧠 Workflow Coach")
+    st.info(get_workflow_advice())
+
+# ---------------- OUTPUT DISPLAY ----------------
+if current_output:
+
+    st.markdown("### Output")
+    st.code(current_output)
+
+    st.markdown("### Quick Refine")
+
+    options = ["Make concise","Convert to OKRs","Add risks section","Make technical"]
+    cols = st.columns(len(options))
+
+    for i,opt in enumerate(options):
+        if cols[i].button(opt):
+            st.session_state.outputs[output_key] = generate(output_key,opt)
+            st.rerun()
+
+    custom = st.text_input("Custom refine")
+
+    if st.button("Apply Custom Refine"):
+        if custom.strip():
+            st.session_state.outputs[output_key] = generate(output_key,custom)
+            st.rerun()
+
+    if st.session_state.suggestions:
+        st.markdown("### 🤖 AI Suggested Next Steps")
+
+        for suggestion in st.session_state.suggestions:
+            col1,col2 = st.columns([1,6])
+
+            with col1:
+                if st.button(suggestion):
+                    st.session_state.outputs[output_key] = generate(output_key,suggestion)
+                    st.rerun()
+
+            with col2:
+                reason = st.session_state.suggestion_explanations.get(suggestion,"")
+                st.caption(f"👉 Why: {reason}")
+
+    st.download_button(
+        "⬇ Export Markdown",
+        current_output,
+        file_name=f"{output_key}.md"
+    )
+
+else:
+    st.info("Generate an artifact to start building your workspace.")
