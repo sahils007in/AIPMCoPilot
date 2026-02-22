@@ -18,6 +18,7 @@ defaults = {
     "active_view": "Executive Summary",
     "suggestions": [],
     "suggestion_explanations": {},
+    "suggestion_confidence": {},
     "memory": [],
     "workflow_cache_key": None,
     "workflow_advice": ""
@@ -37,6 +38,7 @@ def validate_openai_api_key(key):
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
+
     st.header("⚙ Configuration")
 
     api_key = st.text_input("OpenAI API Key", type="password")
@@ -106,8 +108,8 @@ Input:
     tasks = {
         "summary":"Create executive summary.",
         "actions":"Extract prioritized action items.",
-        "prd":"Create structured PRD (Problem, Users, Goals, Metrics, Features, Risks).",
-        "stories":"Generate Agile user stories with acceptance criteria."
+        "prd":"Create structured PRD.",
+        "stories":"Generate Agile user stories."
     }
 
     return base + "\nTask:\n" + tasks[task]
@@ -127,7 +129,7 @@ You are an AI workflow coach for Product Managers.
 
 Artifacts generated: {generated}
 
-Suggest ONE strategic next step in 1-2 sentences.
+Suggest ONE strategic next step.
 """
 
     response = client.chat.completions.create(
@@ -148,8 +150,9 @@ def get_ai_suggestions(current_output):
 
     prompt = f"""
 Suggest EXACTLY 3 useful next refinement actions.
+
 Return format:
-Action | Reason
+Action | Reason | Confidence(High/Medium/Low)
 
 {current_output}
 """
@@ -162,28 +165,41 @@ Action | Reason
 
     raw = response.choices[0].message.content
 
-    suggestions = []
-    explanations = {}
+    suggestions=[]
+    explanations={}
+    confidence_scores={}
 
     for line in raw.split("\n"):
-        if "|" not in line:
+
+        line=line.strip()
+
+        if not line or "|" not in line:
             continue
 
-        action, reason = line.split("|",1)
+        parts=line.split("|")
 
-        action = action.replace("Action:", "").replace("-", "").replace("•","").strip()
-        reason = reason.replace("Reason:", "").strip()
+        if len(parts)<3:
+            continue
 
-        if len(action) < 3:
+        action=parts[0].replace("Action:", "").strip()
+        reason=parts[1].replace("Reason:", "").strip()
+        confidence=parts[2].replace("Confidence:", "").strip()
+
+        if action.lower() in ["action","actions"]:
+            continue
+
+        if len(action)<5:
             continue
 
         suggestions.append(action)
-        explanations[action] = reason
+        explanations[action]=reason
+        confidence_scores[action]=confidence
 
-    suggestions = list(dict.fromkeys(suggestions))
+    suggestions=list(dict.fromkeys(suggestions))
 
-    st.session_state.suggestions = suggestions[:3]
-    st.session_state.suggestion_explanations = explanations
+    st.session_state.suggestions=suggestions[:3]
+    st.session_state.suggestion_explanations=explanations
+    st.session_state.suggestion_confidence=confidence_scores
 
 # ---------------- GENERATE ----------------
 def generate(task, refine=None):
@@ -191,16 +207,11 @@ def generate(task, refine=None):
     existing = st.session_state.outputs[task] if refine else None
     prompt = build_prompt(task, refine, existing)
 
-    start = time.time()
-
     with st.spinner("Generating..."):
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role":"user","content":prompt}]
         )
-
-    duration = round(time.time() - start, 2)
-    st.success(f"Generated in {duration}s")
 
     result = res.choices[0].message.content
 
@@ -212,104 +223,42 @@ def generate(task, refine=None):
 # ---------------- GENERATE BUTTONS ----------------
 st.markdown("### Generate Artifacts")
 
-col0,col1,col2,col3,col4 = st.columns(5)
+cols=st.columns(5)
 
-with col0:
-    if st.button("🚀 Generate All", disabled=input_empty):
-        for key in ["summary","actions","prd","stories"]:
-            st.session_state.outputs[key] = generate(key)
-        st.session_state.active_view = "Executive Summary"
+labels=["🚀 Generate All","Executive Summary","Action Items","Generate PRD","User Stories"]
+keys=["all","summary","actions","prd","stories"]
+
+for i,label in enumerate(labels):
+    if cols[i].button(label, disabled=input_empty):
+        if keys[i]=="all":
+            for k in ["summary","actions","prd","stories"]:
+                st.session_state.outputs[k]=generate(k)
+        else:
+            st.session_state.outputs[keys[i]]=generate(keys[i])
         st.rerun()
 
-with col1:
-    if st.button("Executive Summary", disabled=input_empty):
-        st.session_state.outputs["summary"] = generate("summary")
-        st.session_state.active_view = "Executive Summary"
-        st.rerun()
-
-with col2:
-    if st.button("Action Items", disabled=input_empty):
-        st.session_state.outputs["actions"] = generate("actions")
-        st.session_state.active_view = "Action Items"
-        st.rerun()
-
-with col3:
-    if st.button("Generate PRD", disabled=input_empty):
-        st.session_state.outputs["prd"] = generate("prd")
-        st.session_state.active_view = "PRD"
-        st.rerun()
-
-with col4:
-    if st.button("User Stories", disabled=input_empty):
-        st.session_state.outputs["stories"] = generate("stories")
-        st.session_state.active_view = "User Stories"
-        st.rerun()
-
-# ---------------- WORKSPACE ----------------
-st.markdown("---")
-
-views = ["Executive Summary","Action Items","PRD","User Stories"]
-
-selected = st.radio("Workspace", views, horizontal=True,
-                    index=views.index(st.session_state.active_view))
-
-output_key = {
-    "Executive Summary":"summary",
-    "Action Items":"actions",
-    "PRD":"prd",
-    "User Stories":"stories"
-}[selected]
-
-current_output = st.session_state.outputs[output_key]
-
-# ---------------- WORKFLOW COACH DISPLAY ----------------
+# ---------------- WORKFLOW COACH ----------------
 if any(st.session_state.outputs.values()):
     st.markdown("### 🧠 Workflow Coach")
     st.info(get_workflow_advice())
 
-# ---------------- OUTPUT DISPLAY ----------------
-if current_output:
+# ---------------- DISPLAY OUTPUT ----------------
+for key,val in st.session_state.outputs.items():
+    if val:
+        st.code(val)
 
-    st.markdown("### Output")
-    st.code(current_output)
+# ---------------- SUGGESTIONS DISPLAY ----------------
+if st.session_state.suggestions:
 
-    st.markdown("### Quick Refine")
+    st.markdown("### 🤖 AI Suggested Next Steps")
 
-    options = ["Make concise","Convert to OKRs","Add risks section","Make technical"]
-    cols = st.columns(len(options))
+    for suggestion in st.session_state.suggestions:
 
-    for i,opt in enumerate(options):
-        if cols[i].button(opt):
-            st.session_state.outputs[output_key] = generate(output_key,opt)
+        conf=st.session_state.suggestion_confidence.get(suggestion,"")
+        reason=st.session_state.suggestion_explanations.get(suggestion,"")
+
+        if st.button(f"{suggestion} ⭐ {conf}"):
+            st.session_state.outputs["summary"]=generate("summary",suggestion)
             st.rerun()
 
-    custom = st.text_input("Custom refine")
-
-    if st.button("Apply Custom Refine"):
-        if custom.strip():
-            st.session_state.outputs[output_key] = generate(output_key,custom)
-            st.rerun()
-
-    if st.session_state.suggestions:
-        st.markdown("### 🤖 AI Suggested Next Steps")
-
-        for suggestion in st.session_state.suggestions:
-            col1,col2 = st.columns([1,6])
-
-            with col1:
-                if st.button(suggestion):
-                    st.session_state.outputs[output_key] = generate(output_key,suggestion)
-                    st.rerun()
-
-            with col2:
-                reason = st.session_state.suggestion_explanations.get(suggestion,"")
-                st.caption(f"👉 Why: {reason}")
-
-    st.download_button(
-        "⬇ Export Markdown",
-        current_output,
-        file_name=f"{output_key}.md"
-    )
-
-else:
-    st.info("Generate an artifact to start building your workspace.")
+        st.caption(f"👉 Why: {reason}")
