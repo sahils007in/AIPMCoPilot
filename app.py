@@ -1,296 +1,171 @@
 import streamlit as st
 from openai import OpenAI
-import hashlib
 
-# ---------------- PAGE ----------------
-st.set_page_config(page_title="AI PM Copilot", page_icon="🚀", layout="wide")
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
 
-st.title("🚀 AI Product Manager Copilot")
-st.caption("AI Workspace for Product Managers")
+# =========================
+# SESSION STATE
+# =========================
+if "api_key_valid" not in st.session_state:
+    st.session_state.api_key_valid = False
+if "memory_output" not in st.session_state:
+    st.session_state.memory_output = ""
+if "ai_suggestions" not in st.session_state:
+    st.session_state.ai_suggestions = []
 
-# ---------------- SESSION STATE ----------------
-defaults = {
-    "client": None,
-    "api_key_valid": False,
-    "validated_key": None,
-    "outputs": {"summary":"","actions":"","prd":"","stories":""},
-    "memory": [],
-    "timeline": [],
-    "suggestions": [],
-    "suggestion_explanations": {},
-    "suggestion_confidence": {},
-    "workflow_cache_key": None,
-    "workflow_advice": "",
-    "product_stage": "Unknown"
-}
+# =========================
+# SIDEBAR
+# =========================
+with st.sidebar:
 
-for k,v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+    st.title("⚙️ Configuration")
 
-# ---------------- API VALIDATION ----------------
-def validate_openai_api_key(key):
+    api_key = st.text_input("OpenAI API Key", type="password")
+
+    pm_role = st.selectbox("PM Role", ["Startup PM","Growth PM","Enterprise PM"])
+    output_style = st.selectbox("Output Style", ["Concise","Detailed"])
+
+    st.markdown("---")
+    st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
+
+# =========================
+# API KEY VALIDATION
+# =========================
+
+def validate_key(key):
     try:
-        OpenAI(api_key=key).models.list()
+        client = OpenAI(api_key=key)
+        client.models.list()
         return True
     except:
         return False
 
-# ---------------- SIDEBAR ----------------
-with st.sidebar:
+if api_key and not st.session_state.api_key_valid:
+    with st.spinner("Validating API Key..."):
+        st.session_state.api_key_valid = validate_key(api_key)
 
-    st.header("⚙ Configuration")
-
-    api_key = st.text_input("OpenAI API Key", type="password")
-
-    role = st.selectbox("PM Role",["Startup PM","Agile Coach","Technical PM"])
-    tone = st.selectbox("Output Style",["Concise","Detailed"])
-
-    if api_key and api_key != st.session_state.validated_key:
-        if validate_openai_api_key(api_key):
-            st.session_state.client = OpenAI(api_key=api_key)
-            st.session_state.api_key_valid = True
-            st.session_state.validated_key = api_key
-            st.success("✅ API key validated")
-        else:
-            st.session_state.api_key_valid = False
-            st.error("❌ Invalid API key")
-
-    st.markdown("---")
-    st.markdown("Built by **Sahil Jain** 🚀")
-
-if not st.session_state.api_key_valid:
+# UX messages
+if not api_key:
+    st.warning("🔑 Enter your OpenAI API key in sidebar to begin.")
     st.stop()
 
-client = st.session_state.client
+if not st.session_state.api_key_valid:
+    st.error("❌ Invalid API key.")
+    st.stop()
 
-# ---------------- INPUT ----------------
-user_input = st.text_area("Paste meeting notes or product ideas", height=200)
+st.success("🟢 Connected to OpenAI")
 
-# ---------------- MEMORY ----------------
-def get_memory_context():
-    return "\n".join(st.session_state.memory)
+client = OpenAI(api_key=api_key)
 
-def add_memory(text):
-    if text and text not in st.session_state.memory:
-        st.session_state.memory.append(text)
+# =========================
+# MAIN HEADER
+# =========================
+st.title("🚀 AI Product Manager Copilot")
+st.caption("AI Workspace for Product Managers")
 
-def add_timeline(event):
-    st.session_state.timeline.append(event)
+# =========================
+# INPUT
+# =========================
+idea = st.text_area("Enter Product Idea")
 
-# ---------------- PRODUCT STAGE INTELLIGENCE ----------------
-def detect_product_stage():
-
-    combined = user_input + " ".join(st.session_state.memory)
-
-    prompt=f"""
-Determine product stage:
-
-Discovery = research/validation
-Delivery = execution/PRD
-Growth = metrics/optimization
-
-Return ONE word only.
-Text:
-{combined}
-"""
-
-    res=client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}],
-        temperature=0
-    )
-
-    stage=res.choices[0].message.content.strip()
-
-    if stage not in ["Discovery","Delivery","Growth"]:
-        stage="Discovery"
-
-    st.session_state.product_stage=stage
-
-# ---------------- PROMPT BUILDER ----------------
-def build_prompt(task, refine=None, existing=None):
-
-    if refine and existing:
-        return f"Refine:\n{existing}\nRequest:{refine}"
-
-    base=f"""
-You are expert Product Manager.
-
-Detected Product Stage: {st.session_state.product_stage}
-
-Role:{role}
-Tone:{tone}
-
-Input:
-{user_input}
-
-Previous Context:
-{get_memory_context()}
-"""
-
-    tasks={
-        "summary":"Create executive summary.",
-        "actions":"Extract action items.",
-        "prd":"Create structured PRD.",
-        "stories":"Generate user stories."
-    }
-
-    return base + tasks[task]
-
-# ---------------- WORKFLOW COACH ----------------
-def workflow_coach():
-
-    state_hash=hashlib.md5(str(st.session_state.outputs).encode()).hexdigest()
-
-    if state_hash==st.session_state.workflow_cache_key:
-        return st.session_state.workflow_advice
-
-    generated=[k for k,v in st.session_state.outputs.items() if v]
-
-    prompt=f"Artifacts:{generated}. Suggest next best PM step."
-
-    res=client.chat.completions.create(
+# =========================
+# AI GENERATION
+# =========================
+def ask_ai(prompt):
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user","content":prompt}]
     )
+    return response.choices[0].message.content
 
-    advice=res.choices[0].message.content
+# =========================
+# GENERATE ALL
+# =========================
+if st.button("🚀 Generate Artifacts"):
 
-    st.session_state.workflow_cache_key=state_hash
-    st.session_state.workflow_advice=advice
+    output = ask_ai(f"""
+    Act as Senior Product Manager.
 
-    return advice
+    Generate:
+    - PRD
+    - User Stories
+    - OKRs
+    - Risks
+    - Metrics
 
-# ---------------- AI SUGGESTIONS ----------------
-def get_ai_suggestions(output):
+    Idea: {idea}
+    Role: {pm_role}
+    Style: {output_style}
+    """)
 
-    prompt=f"""
-Suggest 3 next actions.
+    st.session_state.memory_output = output
 
-Format:
-Action | Reason | Confidence
+    suggestions = ask_ai(f"""
+    Suggest next PM actions with confidence level (High/Medium/Low)
+    and short explanation why.
 
-{output}
-"""
+    Idea: {idea}
+    """)
 
-    res=client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}]
-    )
+    st.session_state.ai_suggestions = suggestions.split("\n")
 
-    suggestions=[]
-    reasons={}
-    conf={}
+# =========================
+# DISPLAY OUTPUT
+# =========================
+if st.session_state.memory_output:
+    st.markdown(st.session_state.memory_output)
 
-    for line in res.choices[0].message.content.split("\n"):
+# =========================
+# QUICK REFINE
+# =========================
+if st.session_state.memory_output:
 
-        if "|" not in line:
-            continue
+    st.subheader("Quick Refine")
 
-        parts=line.split("|")
+    col1,col2,col3,col4 = st.columns(4)
 
-        if len(parts)<3:
-            continue
+    if col1.button("Make concise"):
+        st.session_state.memory_output = ask_ai(
+            "Make concise:\n"+st.session_state.memory_output)
 
-        action=parts[0].strip()
+    if col2.button("Convert to OKRs"):
+        st.session_state.memory_output = ask_ai(
+            "Convert to OKRs:\n"+st.session_state.memory_output)
 
-        if action.lower()=="action":
-            continue
+    if col3.button("Add risks"):
+        st.session_state.memory_output = ask_ai(
+            "Add risks section:\n"+st.session_state.memory_output)
 
-        suggestions.append(action)
-        reasons[action]=parts[1].strip()
-        conf[action]=parts[2].strip()
+    if col4.button("Make technical"):
+        st.session_state.memory_output = ask_ai(
+            "Make technical:\n"+st.session_state.memory_output)
 
-    st.session_state.suggestions=suggestions[:3]
-    st.session_state.suggestion_explanations=reasons
-    st.session_state.suggestion_confidence=conf
-
-# ---------------- GENERATE ----------------
-def generate(task, refine=None):
-
-    existing=st.session_state.outputs[task] if refine else None
-    prompt=build_prompt(task,refine,existing)
-
-    with st.spinner("Generating..."):
-        res=client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":prompt}]
-        )
-
-    result=res.choices[0].message.content
-
-    st.session_state.outputs[task]=result
-
-    add_memory(result)
-    add_timeline(f"{task.upper()} updated")
-    detect_product_stage()
-    get_ai_suggestions(result)
-
-# ---------------- BUTTONS ----------------
-cols=st.columns(4)
-
-if cols[0].button("Executive Summary"):
-    generate("summary")
-
-if cols[1].button("Action Items"):
-    generate("actions")
-
-if cols[2].button("Generate PRD"):
-    generate("prd")
-
-if cols[3].button("User Stories"):
-    generate("stories")
-
-# ---------------- STAGE BADGE ----------------
-if st.session_state.product_stage!="Unknown":
-    st.markdown(f"### 🧭 Product Stage Detected: **{st.session_state.product_stage}**")
-
-# ---------------- WORKFLOW COACH ----------------
-if any(st.session_state.outputs.values()):
-    st.markdown("### 🧠 Workflow Coach")
-    st.info(workflow_coach())
-
-# ---------------- OUTPUT ----------------
-current_output=None
-for v in st.session_state.outputs.values():
-    if v:
-        current_output=v
-
-if current_output:
-
-    st.code(current_output)
-
-    st.markdown("### Quick Refine")
-
-    opts=["Make concise","Convert to OKRs","Add risks section","Make technical"]
-    cols=st.columns(len(opts))
-
-    for i,opt in enumerate(opts):
-        if cols[i].button(opt):
-            generate("summary",opt)
-
-    custom=st.text_input("Custom refine")
+    custom_refine = st.text_input("Custom refine")
 
     if st.button("Apply Custom Refine"):
-        generate("summary",custom)
+        if custom_refine:
+            st.session_state.memory_output = ask_ai(
+                custom_refine+"\n"+st.session_state.memory_output)
 
-    st.markdown("### 🤖 AI Suggested Next Steps")
+# =========================
+# AI NEXT STEPS
+# =========================
+if st.session_state.ai_suggestions:
 
-    for s in st.session_state.suggestions:
+    st.subheader("🤖 AI Suggested Next Steps")
 
-        conf=st.session_state.suggestion_confidence.get(s,"")
-        reason=st.session_state.suggestion_explanations.get(s,"")
+    for s in st.session_state.ai_suggestions:
 
-        if st.button(f"{s} ⭐ {conf}"):
-            generate("summary",s)
+        if not s.strip():
+            continue
 
-        st.caption(f"👉 Why: {reason}")
+        confidence = "⭐ Medium"
+        if "High" in s:
+            confidence = "⭐ High"
+        elif "Low" in s:
+            confidence = "⭐ Low"
 
-# ---------------- TIMELINE ----------------
-if st.session_state.timeline:
-
-    st.markdown("### 📜 AI Workflow Timeline")
-
-    for step in st.session_state.timeline[::-1]:
-        st.write(f"✅ {step}")
+        st.markdown(f"**{s.replace('High','').replace('Medium','').replace('Low','')}** {confidence}")
