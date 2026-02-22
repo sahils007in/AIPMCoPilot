@@ -1,6 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-import time
 import hashlib
 
 # ---------------- PAGE ----------------
@@ -9,7 +8,7 @@ st.set_page_config(page_title="AI PM Copilot", page_icon="🚀", layout="wide")
 st.title("🚀 AI Product Manager Copilot")
 st.caption("AI Workspace for Product Managers")
 
-# ---------------- SESSION ----------------
+# ---------------- SESSION STATE ----------------
 defaults = {
     "client": None,
     "api_key_valid": False,
@@ -21,14 +20,15 @@ defaults = {
     "suggestion_explanations": {},
     "suggestion_confidence": {},
     "workflow_cache_key": None,
-    "workflow_advice": ""
+    "workflow_advice": "",
+    "product_stage": "Unknown"
 }
 
 for k,v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ---------------- API KEY ----------------
+# ---------------- API VALIDATION ----------------
 def validate_openai_api_key(key):
     try:
         OpenAI(api_key=key).models.list()
@@ -36,6 +36,7 @@ def validate_openai_api_key(key):
     except:
         return False
 
+# ---------------- SIDEBAR ----------------
 with st.sidebar:
 
     st.header("⚙ Configuration")
@@ -46,15 +47,14 @@ with st.sidebar:
     tone = st.selectbox("Output Style",["Concise","Detailed"])
 
     if api_key and api_key != st.session_state.validated_key:
-        with st.spinner("Validating API key..."):
-            if validate_openai_api_key(api_key):
-                st.session_state.client = OpenAI(api_key=api_key)
-                st.session_state.api_key_valid = True
-                st.session_state.validated_key = api_key
-                st.success("✅ API key validated")
-            else:
-                st.session_state.api_key_valid = False
-                st.error("❌ Invalid API key")
+        if validate_openai_api_key(api_key):
+            st.session_state.client = OpenAI(api_key=api_key)
+            st.session_state.api_key_valid = True
+            st.session_state.validated_key = api_key
+            st.success("✅ API key validated")
+        else:
+            st.session_state.api_key_valid = False
+            st.error("❌ Invalid API key")
 
     st.markdown("---")
     st.markdown("Built by **Sahil Jain** 🚀")
@@ -65,29 +65,59 @@ if not st.session_state.api_key_valid:
 client = st.session_state.client
 
 # ---------------- INPUT ----------------
-user_input = st.text_area("Paste meeting notes or product ideas", height=220)
+user_input = st.text_area("Paste meeting notes or product ideas", height=200)
 
 # ---------------- MEMORY ----------------
 def get_memory_context():
-    if not st.session_state.memory:
-        return ""
     return "\n".join(st.session_state.memory)
 
 def add_memory(text):
-    if text not in st.session_state.memory:
+    if text and text not in st.session_state.memory:
         st.session_state.memory.append(text)
 
 def add_timeline(event):
     st.session_state.timeline.append(event)
 
-# ---------------- PROMPT ----------------
+# ---------------- PRODUCT STAGE INTELLIGENCE ----------------
+def detect_product_stage():
+
+    combined = user_input + " ".join(st.session_state.memory)
+
+    prompt=f"""
+Determine product stage:
+
+Discovery = research/validation
+Delivery = execution/PRD
+Growth = metrics/optimization
+
+Return ONE word only.
+Text:
+{combined}
+"""
+
+    res=client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0
+    )
+
+    stage=res.choices[0].message.content.strip()
+
+    if stage not in ["Discovery","Delivery","Growth"]:
+        stage="Discovery"
+
+    st.session_state.product_stage=stage
+
+# ---------------- PROMPT BUILDER ----------------
 def build_prompt(task, refine=None, existing=None):
 
     if refine and existing:
-        return f"Refine this output:\n{existing}\nRequest:{refine}"
+        return f"Refine:\n{existing}\nRequest:{refine}"
 
     base=f"""
 You are expert Product Manager.
+
+Detected Product Stage: {st.session_state.product_stage}
 
 Role:{role}
 Tone:{tone}
@@ -111,9 +141,9 @@ Previous Context:
 # ---------------- WORKFLOW COACH ----------------
 def workflow_coach():
 
-    state_hash = hashlib.md5(str(st.session_state.outputs).encode()).hexdigest()
+    state_hash=hashlib.md5(str(st.session_state.outputs).encode()).hexdigest()
 
-    if state_hash == st.session_state.workflow_cache_key:
+    if state_hash==st.session_state.workflow_cache_key:
         return st.session_state.workflow_advice
 
     generated=[k for k,v in st.session_state.outputs.items() if v]
@@ -139,7 +169,7 @@ def get_ai_suggestions(output):
 Suggest 3 next actions.
 
 Format:
-Action | Reason | Confidence(High/Medium/Low)
+Action | Reason | Confidence
 
 {output}
 """
@@ -194,6 +224,7 @@ def generate(task, refine=None):
 
     add_memory(result)
     add_timeline(f"{task.upper()} updated")
+    detect_product_stage()
     get_ai_suggestions(result)
 
 # ---------------- BUTTONS ----------------
@@ -211,6 +242,10 @@ if cols[2].button("Generate PRD"):
 if cols[3].button("User Stories"):
     generate("stories")
 
+# ---------------- STAGE BADGE ----------------
+if st.session_state.product_stage!="Unknown":
+    st.markdown(f"### 🧭 Product Stage Detected: **{st.session_state.product_stage}**")
+
 # ---------------- WORKFLOW COACH ----------------
 if any(st.session_state.outputs.values()):
     st.markdown("### 🧠 Workflow Coach")
@@ -226,7 +261,6 @@ if current_output:
 
     st.code(current_output)
 
-    # REFINE
     st.markdown("### Quick Refine")
 
     opts=["Make concise","Convert to OKRs","Add risks section","Make technical"]
@@ -241,7 +275,6 @@ if current_output:
     if st.button("Apply Custom Refine"):
         generate("summary",custom)
 
-    # SUGGESTIONS
     st.markdown("### 🤖 AI Suggested Next Steps")
 
     for s in st.session_state.suggestions:
