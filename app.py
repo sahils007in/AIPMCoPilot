@@ -65,7 +65,10 @@ if not st.session_state.api_key_valid:
 client = st.session_state.client
 
 # ---------------- INPUT ----------------
-user_input = st.text_area("Paste meeting notes or product ideas", height=220)
+user_input = st.text_area(
+    "Paste Product Context (Ideas, Notes, Transcripts, Research, or Raw Input)",
+    height=220
+)
 input_empty = not user_input.strip()
 
 # ---------------- MEMORY ----------------
@@ -167,7 +170,7 @@ Action | Reason
 
     for line in raw.split("\n"):
 
-        # ✅ FIX: remove header row "Action | Reason"
+        # FIX: remove header row
         if "Action" in line and "Reason" in line:
             continue
 
