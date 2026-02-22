@@ -9,12 +9,12 @@ st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
 # =========================
 # SESSION STATE
 # =========================
-if "api_key_valid" not in st.session_state:
-    st.session_state.api_key_valid = False
+if "api_valid" not in st.session_state:
+    st.session_state.api_valid = False
 if "memory_output" not in st.session_state:
     st.session_state.memory_output = ""
-if "ai_suggestions" not in st.session_state:
-    st.session_state.ai_suggestions = []
+if "suggestions" not in st.session_state:
+    st.session_state.suggestions = []
 
 # =========================
 # SIDEBAR
@@ -32,9 +32,14 @@ with st.sidebar:
     st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
 
 # =========================
-# API KEY VALIDATION
+# HEADER ALWAYS VISIBLE
 # =========================
+st.title("🚀 AI Product Manager Copilot")
+st.caption("AI Workspace for Product Managers")
 
+# =========================
+# API VALIDATION
+# =========================
 def validate_key(key):
     try:
         client = OpenAI(api_key=key)
@@ -43,28 +48,27 @@ def validate_key(key):
     except:
         return False
 
-if api_key and not st.session_state.api_key_valid:
+if api_key and not st.session_state.api_valid:
     with st.spinner("Validating API Key..."):
-        st.session_state.api_key_valid = validate_key(api_key)
+        st.session_state.api_valid = validate_key(api_key)
 
-# UX messages
+# UX onboarding message
 if not api_key:
     st.warning("🔑 Enter your OpenAI API key in sidebar to begin.")
-    st.stop()
 
-if not st.session_state.api_key_valid:
-    st.error("❌ Invalid API key.")
-    st.stop()
+elif not st.session_state.api_valid:
+    st.error("❌ Invalid API Key")
 
-st.success("🟢 Connected to OpenAI")
+else:
+    st.success("🟢 Connected to OpenAI")
+
+# =========================
+# DISABLE FEATURES IF NO KEY
+# =========================
+if not st.session_state.api_valid:
+    st.stop()
 
 client = OpenAI(api_key=api_key)
-
-# =========================
-# MAIN HEADER
-# =========================
-st.title("🚀 AI Product Manager Copilot")
-st.caption("AI Workspace for Product Managers")
 
 # =========================
 # INPUT
@@ -72,7 +76,7 @@ st.caption("AI Workspace for Product Managers")
 idea = st.text_area("Enter Product Idea")
 
 # =========================
-# AI GENERATION
+# AI FUNCTION
 # =========================
 def ask_ai(prompt):
     response = client.chat.completions.create(
@@ -87,33 +91,32 @@ def ask_ai(prompt):
 if st.button("🚀 Generate Artifacts"):
 
     output = ask_ai(f"""
-    Act as Senior Product Manager.
+Act as Senior Product Manager.
 
-    Generate:
-    - PRD
-    - User Stories
-    - OKRs
-    - Risks
-    - Metrics
+Generate:
+- PRD
+- User Stories
+- OKRs
+- Risks
+- Metrics
 
-    Idea: {idea}
-    Role: {pm_role}
-    Style: {output_style}
-    """)
+Idea: {idea}
+Role: {pm_role}
+Style: {output_style}
+""")
 
     st.session_state.memory_output = output
 
-    suggestions = ask_ai(f"""
-    Suggest next PM actions with confidence level (High/Medium/Low)
-    and short explanation why.
+    suggestion_text = ask_ai(f"""
+Suggest next PM actions with confidence level (High/Medium/Low) and short why.
 
-    Idea: {idea}
-    """)
+Idea: {idea}
+""")
 
-    st.session_state.ai_suggestions = suggestions.split("\n")
+    st.session_state.suggestions = suggestion_text.split("\n")
 
 # =========================
-# DISPLAY OUTPUT
+# OUTPUT DISPLAY
 # =========================
 if st.session_state.memory_output:
     st.markdown(st.session_state.memory_output)
@@ -137,7 +140,7 @@ if st.session_state.memory_output:
 
     if col3.button("Add risks"):
         st.session_state.memory_output = ask_ai(
-            "Add risks section:\n"+st.session_state.memory_output)
+            "Add risks:\n"+st.session_state.memory_output)
 
     if col4.button("Make technical"):
         st.session_state.memory_output = ask_ai(
@@ -153,11 +156,11 @@ if st.session_state.memory_output:
 # =========================
 # AI NEXT STEPS
 # =========================
-if st.session_state.ai_suggestions:
+if st.session_state.suggestions:
 
     st.subheader("🤖 AI Suggested Next Steps")
 
-    for s in st.session_state.ai_suggestions:
+    for s in st.session_state.suggestions:
 
         if not s.strip():
             continue
@@ -168,4 +171,6 @@ if st.session_state.ai_suggestions:
         elif "Low" in s:
             confidence = "⭐ Low"
 
-        st.markdown(f"**{s.replace('High','').replace('Medium','').replace('Low','')}** {confidence}")
+        clean = s.replace("High","").replace("Medium","").replace("Low","")
+
+        st.markdown(f"**{clean}** {confidence}")
