@@ -1,37 +1,36 @@
 import streamlit as st
 from openai import OpenAI
 
-# =========================
-# PAGE CONFIG
-# =========================
 st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
 
 # =========================
 # SESSION STATE
 # =========================
 if "api_valid" not in st.session_state:
-    st.session_state.api_valid = False
+    st.session_state.api_valid=False
+
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab="Executive Summary"
 
 if "artifacts" not in st.session_state:
-    st.session_state.artifacts = {
-        "Executive Summary": "",
-        "Action Items": "",
-        "PRD": "",
-        "User Stories": ""
+    st.session_state.artifacts={
+        "Executive Summary":"",
+        "Action Items":"",
+        "PRD":"",
+        "User Stories":""
     }
 
 if "suggestions" not in st.session_state:
-    st.session_state.suggestions = []
+    st.session_state.suggestions=[]
 
 # =========================
 # SIDEBAR
 # =========================
 with st.sidebar:
     st.title("⚙️ Configuration")
-
-    api_key = st.text_input("OpenAI API Key", type="password")
-    pm_role = st.selectbox("PM Role", ["Startup PM","Growth PM","Enterprise PM"])
-    output_style = st.selectbox("Output Style", ["Concise","Detailed"])
+    api_key=st.text_input("OpenAI API Key",type="password")
+    pm_role=st.selectbox("PM Role",["Startup PM","Growth PM","Enterprise PM"])
+    output_style=st.selectbox("Output Style",["Concise","Detailed"])
 
     st.markdown("---")
     st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
@@ -54,78 +53,76 @@ def validate_key(key):
 
 if api_key and not st.session_state.api_valid:
     with st.spinner("Validating API Key..."):
-        st.session_state.api_valid = validate_key(api_key)
+        st.session_state.api_valid=validate_key(api_key)
 
 if not api_key:
-    st.warning("🔑 Enter your OpenAI API key in sidebar to begin.")
+    st.warning("🔑 Enter your OpenAI API key in sidebar.")
     st.stop()
 
 if not st.session_state.api_valid:
-    st.error("❌ Invalid API Key")
+    st.error("❌ Invalid API key")
     st.stop()
 
 st.success("🟢 Connected to OpenAI")
-
-client = OpenAI(api_key=api_key)
+client=OpenAI(api_key=api_key)
 
 # =========================
 # INPUT
 # =========================
-product_input = st.text_area(
-    "📥 Paste Product Context (Idea, Notes, Transcript, or Any Raw Input)",
-    height=200
+product_input=st.text_area(
+"📥 Paste Product Context (Idea, Notes, Transcript, or Any Raw Input)",
+height=200
 )
-
-st.caption("Supports ideas, meeting notes, transcripts, research inputs or unstructured text.")
 
 # =========================
 # AI CALL
 # =========================
 def ask_ai(prompt):
-    response = client.chat.completions.create(
+    return client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user","content":prompt}]
-    )
-    return response.choices[0].message.content
+    ).choices[0].message.content
 
 # =========================
-# GENERATION FUNCTIONS
+# GENERATION
 # =========================
-def generate_single(type_name):
-    prompt = f"""
-Act as Senior Product Manager.
+def generate(type_name):
+
+    with st.spinner(f"Generating {type_name}..."):
+
+        result=ask_ai(f"""
+Act as senior product manager.
 
 Generate {type_name}.
 
-Role: {pm_role}
-Style: {output_style}
-
-Context:
-{product_input}
-"""
-    return ask_ai(prompt)
-
-
-def generate_all():
-    st.session_state.artifacts["Executive Summary"] = generate_single("Executive Summary")
-    st.session_state.artifacts["Action Items"] = generate_single("Action Items")
-    st.session_state.artifacts["PRD"] = generate_single("Product Requirements Document")
-    st.session_state.artifacts["User Stories"] = generate_single("User Stories")
-
-    suggestion_text = ask_ai(f"""
-Suggest 3 next PM steps with confidence level (High/Medium/Low)
-and short explanation.
+Role:{pm_role}
+Style:{output_style}
 
 Context:
 {product_input}
 """)
 
-    st.session_state.suggestions = suggestion_text.split("\n")
+        st.session_state.artifacts[type_name]=result
+        st.session_state.active_tab=type_name
+
+        # generate suggestions
+        suggestion_text=ask_ai(f"""
+Suggest 3 next PM actions with confidence (High/Medium/Low) and short reason.
+
+Context:
+{product_input}
+""")
+
+        st.session_state.suggestions=suggestion_text.split("\n")
+
+def generate_all():
+    for k in st.session_state.artifacts.keys():
+        generate(k)
 
 # =========================
-# BUTTON ROW (EQUAL SPACING)
+# BUTTON ROW
 # =========================
-col1, col2, col3, col4, col5 = st.columns(5)
+col1,col2,col3,col4,col5=st.columns(5)
 
 with col1:
     if st.button("🚀 Generate All"):
@@ -133,19 +130,19 @@ with col1:
 
 with col2:
     if st.button("Executive Summary"):
-        st.session_state.artifacts["Executive Summary"] = generate_single("Executive Summary")
+        generate("Executive Summary")
 
 with col3:
     if st.button("Action Items"):
-        st.session_state.artifacts["Action Items"] = generate_single("Action Items")
+        generate("Action Items")
 
 with col4:
     if st.button("PRD"):
-        st.session_state.artifacts["PRD"] = generate_single("Product Requirements Document")
+        generate("PRD")
 
 with col5:
     if st.button("User Stories"):
-        st.session_state.artifacts["User Stories"] = generate_single("User Stories")
+        generate("User Stories")
 
 # =========================
 # OUTPUT TABS
@@ -154,24 +151,40 @@ if any(st.session_state.artifacts.values()):
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Executive Summary","Action Items","PRD","User Stories"]
-    )
+    tabs=st.tabs(list(st.session_state.artifacts.keys()))
 
-    with tab1:
-        st.markdown(st.session_state.artifacts["Executive Summary"])
-
-    with tab2:
-        st.markdown(st.session_state.artifacts["Action Items"])
-
-    with tab3:
-        st.markdown(st.session_state.artifacts["PRD"])
-
-    with tab4:
-        st.markdown(st.session_state.artifacts["User Stories"])
+    for i,key in enumerate(st.session_state.artifacts.keys()):
+        with tabs[i]:
+            if key==st.session_state.active_tab:
+                st.markdown(st.session_state.artifacts[key])
 
 # =========================
-# AI SUGGESTED NEXT STEPS
+# QUICK REFINE
+# =========================
+if st.session_state.artifacts[st.session_state.active_tab]:
+
+    st.subheader("Quick Refine")
+
+    r1,r2,r3,r4=st.columns(4)
+
+    if r1.button("Make concise"):
+        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
+            "Make concise:\n"+st.session_state.artifacts[st.session_state.active_tab])
+
+    if r2.button("Convert to OKRs"):
+        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
+            "Convert to OKRs:\n"+st.session_state.artifacts[st.session_state.active_tab])
+
+    if r3.button("Add risks"):
+        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
+            "Add risks section:\n"+st.session_state.artifacts[st.session_state.active_tab])
+
+    if r4.button("Make technical"):
+        st.session_state.artifacts[st.session_state.active_tab]=ask_ai(
+            "Make technical:\n"+st.session_state.artifacts[st.session_state.active_tab])
+
+# =========================
+# AI SUGGESTIONS
 # =========================
 if st.session_state.suggestions:
 
@@ -183,12 +196,10 @@ if st.session_state.suggestions:
         if not s.strip():
             continue
 
-        confidence = "⭐ Medium"
-        if "High" in s:
-            confidence = "⭐ High"
-        elif "Low" in s:
-            confidence = "⭐ Low"
+        confidence="⭐ Medium"
+        if "High" in s: confidence="⭐ High"
+        elif "Low" in s: confidence="⭐ Low"
 
-        clean = s.replace("High","").replace("Medium","").replace("Low","")
+        clean=s.replace("High","").replace("Medium","").replace("Low","")
 
         st.markdown(f"**{clean}** {confidence}")
