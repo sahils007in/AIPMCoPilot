@@ -1,12 +1,13 @@
 import streamlit as st
 from openai import OpenAI
 import time
+import hashlib
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="AI PM Copilot", page_icon="🚀", layout="wide")
 
 st.title("🚀 AI Product Manager Copilot")
-st.caption("AI Workspace for Product Managers — intelligent workflow assistance.")
+st.caption("AI Workspace for Product Managers — Intelligent Artifact Generation")
 
 # ---------------- SESSION STATE ----------------
 defaults = {
@@ -17,7 +18,9 @@ defaults = {
     "active_view": "Executive Summary",
     "suggestions": [],
     "suggestion_explanations": {},
-    "memory": []
+    "memory": [],
+    "workflow_cache_key": None,
+    "workflow_advice": ""
 }
 
 for k,v in defaults.items():
@@ -34,13 +37,11 @@ def validate_openai_api_key(key):
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-
     st.header("⚙ Configuration")
 
     api_key = st.text_input("OpenAI API Key", type="password")
 
     role = st.selectbox("PM Role",["Startup PM","Agile Coach","Technical PM"])
-
     tone = st.selectbox("Output Style",["Concise","Detailed"])
 
     if api_key and api_key != st.session_state.validated_key:
@@ -67,11 +68,15 @@ client = st.session_state.client
 user_input = st.text_area("Paste meeting notes or product ideas", height=220)
 input_empty = not user_input.strip()
 
-# ---------------- MEMORY CONTEXT ----------------
+# ---------------- MEMORY ----------------
 def get_memory_context():
     if not st.session_state.memory:
         return ""
     return "\n\nPrevious Artifacts:\n" + "\n\n".join(st.session_state.memory)
+
+def add_to_memory(content):
+    if content and content not in st.session_state.memory:
+        st.session_state.memory.append(content)
 
 # ---------------- PROMPT BUILDER ----------------
 def build_prompt(task, refine=None, existing=None):
@@ -86,8 +91,6 @@ Request:
 {refine}
 """
 
-    memory_context = get_memory_context()
-
     base = f"""
 You are an expert Product Manager.
 
@@ -97,7 +100,7 @@ Response Style: {tone}
 Input:
 {user_input}
 
-{memory_context}
+{get_memory_context()}
 """
 
     tasks = {
@@ -111,6 +114,11 @@ Input:
 
 # ---------------- WORKFLOW COACH ----------------
 def get_workflow_advice():
+
+    state_hash = hashlib.md5(str(st.session_state.outputs).encode()).hexdigest()
+
+    if state_hash == st.session_state.workflow_cache_key:
+        return st.session_state.workflow_advice
 
     generated = [k for k,v in st.session_state.outputs.items() if v]
 
@@ -128,13 +136,18 @@ Suggest ONE strategic next step in 1-2 sentences.
         temperature=0.3
     )
 
-    return response.choices[0].message.content
+    advice = response.choices[0].message.content
+
+    st.session_state.workflow_cache_key = state_hash
+    st.session_state.workflow_advice = advice
+
+    return advice
 
 # ---------------- AI SUGGESTIONS ----------------
 def get_ai_suggestions(current_output):
 
     prompt = f"""
-Suggest 3 useful next refinement actions for this output.
+Suggest EXACTLY 3 useful next refinement actions.
 Return format:
 Action | Reason
 
@@ -147,19 +160,30 @@ Action | Reason
         temperature=0.3
     )
 
-    suggestions=[]
-    explanations={}
+    raw = response.choices[0].message.content
 
-    for line in response.choices[0].message.content.split("\n"):
-        if "|" in line:
-            action,reason=line.split("|",1)
-            action=action.strip("-• ").strip()
-            reason=reason.strip()
-            suggestions.append(action)
-            explanations[action]=reason
+    suggestions = []
+    explanations = {}
 
-    st.session_state.suggestions=suggestions[:3]
-    st.session_state.suggestion_explanations=explanations
+    for line in raw.split("\n"):
+        if "|" not in line:
+            continue
+
+        action, reason = line.split("|",1)
+
+        action = action.replace("Action:", "").replace("-", "").replace("•","").strip()
+        reason = reason.replace("Reason:", "").strip()
+
+        if len(action) < 3:
+            continue
+
+        suggestions.append(action)
+        explanations[action] = reason
+
+    suggestions = list(dict.fromkeys(suggestions))
+
+    st.session_state.suggestions = suggestions[:3]
+    st.session_state.suggestion_explanations = explanations
 
 # ---------------- GENERATE ----------------
 def generate(task, refine=None):
@@ -167,23 +191,20 @@ def generate(task, refine=None):
     existing = st.session_state.outputs[task] if refine else None
     prompt = build_prompt(task, refine, existing)
 
-    start=time.time()
+    start = time.time()
 
     with st.spinner("Generating..."):
-        res=client.chat.completions.create(
+        res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role":"user","content":prompt}]
         )
 
-    duration=round(time.time()-start,2)
+    duration = round(time.time() - start, 2)
     st.success(f"Generated in {duration}s")
 
-    result=res.choices[0].message.content
+    result = res.choices[0].message.content
 
-    # Add to memory
-    st.session_state.memory.append(result)
-
-    # Update suggestions
+    add_to_memory(result)
     get_ai_suggestions(result)
 
     return result
@@ -191,98 +212,104 @@ def generate(task, refine=None):
 # ---------------- GENERATE BUTTONS ----------------
 st.markdown("### Generate Artifacts")
 
-col0,col1,col2,col3,col4=st.columns(5)
+col0,col1,col2,col3,col4 = st.columns(5)
 
 with col0:
-    if st.button("🚀 Generate All",disabled=input_empty):
+    if st.button("🚀 Generate All", disabled=input_empty):
         for key in ["summary","actions","prd","stories"]:
-            st.session_state.outputs[key]=generate(key)
-        st.session_state.active_view="Executive Summary"
+            st.session_state.outputs[key] = generate(key)
+        st.session_state.active_view = "Executive Summary"
         st.rerun()
 
 with col1:
-    if st.button("Executive Summary",disabled=input_empty):
-        st.session_state.outputs["summary"]=generate("summary")
-        st.session_state.active_view="Executive Summary"
+    if st.button("Executive Summary", disabled=input_empty):
+        st.session_state.outputs["summary"] = generate("summary")
+        st.session_state.active_view = "Executive Summary"
         st.rerun()
 
 with col2:
-    if st.button("Action Items",disabled=input_empty):
-        st.session_state.outputs["actions"]=generate("actions")
-        st.session_state.active_view="Action Items"
+    if st.button("Action Items", disabled=input_empty):
+        st.session_state.outputs["actions"] = generate("actions")
+        st.session_state.active_view = "Action Items"
         st.rerun()
 
 with col3:
-    if st.button("Generate PRD",disabled=input_empty):
-        st.session_state.outputs["prd"]=generate("prd")
-        st.session_state.active_view="PRD"
+    if st.button("Generate PRD", disabled=input_empty):
+        st.session_state.outputs["prd"] = generate("prd")
+        st.session_state.active_view = "PRD"
         st.rerun()
 
 with col4:
-    if st.button("User Stories",disabled=input_empty):
-        st.session_state.outputs["stories"]=generate("stories")
-        st.session_state.active_view="User Stories"
+    if st.button("User Stories", disabled=input_empty):
+        st.session_state.outputs["stories"] = generate("stories")
+        st.session_state.active_view = "User Stories"
         st.rerun()
 
 # ---------------- WORKSPACE ----------------
 st.markdown("---")
 
-views=["Executive Summary","Action Items","PRD","User Stories"]
+views = ["Executive Summary","Action Items","PRD","User Stories"]
 
-selected=st.radio("Workspace",views,horizontal=True,
-                  index=views.index(st.session_state.active_view))
+selected = st.radio("Workspace", views, horizontal=True,
+                    index=views.index(st.session_state.active_view))
 
-output_key={
+output_key = {
     "Executive Summary":"summary",
     "Action Items":"actions",
     "PRD":"prd",
     "User Stories":"stories"
 }[selected]
 
-current_output=st.session_state.outputs[output_key]
+current_output = st.session_state.outputs[output_key]
 
 # ---------------- WORKFLOW COACH DISPLAY ----------------
 if any(st.session_state.outputs.values()):
     st.markdown("### 🧠 Workflow Coach")
     st.info(get_workflow_advice())
 
+# ---------------- OUTPUT DISPLAY ----------------
 if current_output:
 
+    st.markdown("### Output")
     st.code(current_output)
 
-    # Quick refine
     st.markdown("### Quick Refine")
 
-    options=["Make concise","Convert to OKRs","Add risks section","Make technical"]
-    cols=st.columns(len(options))
+    options = ["Make concise","Convert to OKRs","Add risks section","Make technical"]
+    cols = st.columns(len(options))
 
     for i,opt in enumerate(options):
         if cols[i].button(opt):
-            st.session_state.outputs[output_key]=generate(output_key,opt)
+            st.session_state.outputs[output_key] = generate(output_key,opt)
             st.rerun()
 
-    # Custom refine
-    custom=st.text_input("Custom refine")
+    custom = st.text_input("Custom refine")
 
     if st.button("Apply Custom Refine"):
         if custom.strip():
-            st.session_state.outputs[output_key]=generate(output_key,custom)
+            st.session_state.outputs[output_key] = generate(output_key,custom)
             st.rerun()
 
-    # AI Suggestions with explanation
     if st.session_state.suggestions:
         st.markdown("### 🤖 AI Suggested Next Steps")
 
         for suggestion in st.session_state.suggestions:
-            col1,col2=st.columns([1,6])
+            col1,col2 = st.columns([1,6])
 
             with col1:
                 if st.button(suggestion):
-                    st.session_state.outputs[output_key]=generate(output_key,suggestion)
+                    st.session_state.outputs[output_key] = generate(output_key,suggestion)
                     st.rerun()
 
             with col2:
-                reason=st.session_state.suggestion_explanations.get(suggestion,"")
+                reason = st.session_state.suggestion_explanations.get(suggestion,"")
                 st.caption(f"👉 Why: {reason}")
 
-    st.download_button("⬇ Export Markdown",current_output,file_name=f"{output_key}.md")
+    st.download_button(
+        "⬇ Export Markdown",
+        current_output,
+        file_name=f"{output_key}.md"
+    )
+
+else:
+    st.info("Generate an artifact to start building your workspace.")
