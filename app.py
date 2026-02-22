@@ -11,8 +11,15 @@ st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
 # =========================
 if "api_valid" not in st.session_state:
     st.session_state.api_valid = False
-if "output" not in st.session_state:
-    st.session_state.output = ""
+
+if "artifacts" not in st.session_state:
+    st.session_state.artifacts = {
+        "Executive Summary": "",
+        "Action Items": "",
+        "PRD": "",
+        "User Stories": ""
+    }
+
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
@@ -30,7 +37,7 @@ with st.sidebar:
     st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
 
 # =========================
-# HEADER (ALWAYS VISIBLE)
+# HEADER
 # =========================
 st.title("🚀 AI Product Manager Copilot")
 st.caption("AI Workspace for Product Managers")
@@ -82,13 +89,13 @@ def ask_ai(prompt):
     return response.choices[0].message.content
 
 # =========================
-# ARTIFACT GENERATION
+# GENERATION FUNCTIONS
 # =========================
-def generate_artifact(type_name):
+def generate_single(type_name):
     prompt = f"""
 Act as Senior Product Manager.
 
-Generate {type_name} for the following context.
+Generate {type_name}.
 
 Role: {pm_role}
 Style: {output_style}
@@ -96,11 +103,18 @@ Style: {output_style}
 Context:
 {product_input}
 """
-    result = ask_ai(prompt)
-    st.session_state.output = result
+    return ask_ai(prompt)
+
+
+def generate_all():
+    st.session_state.artifacts["Executive Summary"] = generate_single("Executive Summary")
+    st.session_state.artifacts["Action Items"] = generate_single("Action Items")
+    st.session_state.artifacts["PRD"] = generate_single("Product Requirements Document")
+    st.session_state.artifacts["User Stories"] = generate_single("User Stories")
 
     suggestion_text = ask_ai(f"""
-Suggest next PM actions with confidence (High/Medium/Low) and short reason.
+Suggest 3 next PM steps with confidence level (High/Medium/Low)
+and short explanation.
 
 Context:
 {product_input}
@@ -109,63 +123,52 @@ Context:
     st.session_state.suggestions = suggestion_text.split("\n")
 
 # =========================
-# BUTTONS ROW
+# BUTTON ROW (EQUAL SPACING)
 # =========================
 col1, col2, col3, col4, col5 = st.columns(5)
 
-if col1.button("Executive Summary"):
-    generate_artifact("Executive Summary")
+with col1:
+    if st.button("🚀 Generate All"):
+        generate_all()
 
-if col2.button("Action Items"):
-    generate_artifact("Action Items")
+with col2:
+    if st.button("Executive Summary"):
+        st.session_state.artifacts["Executive Summary"] = generate_single("Executive Summary")
 
-if col3.button("PRD"):
-    generate_artifact("Product Requirements Document")
+with col3:
+    if st.button("Action Items"):
+        st.session_state.artifacts["Action Items"] = generate_single("Action Items")
 
-if col4.button("User Stories"):
-    generate_artifact("User Stories")
+with col4:
+    if st.button("PRD"):
+        st.session_state.artifacts["PRD"] = generate_single("Product Requirements Document")
 
-if col5.button("🚀 Generate All"):
-    generate_artifact("Executive Summary, PRD, User Stories, OKRs, Risks and Metrics")
+with col5:
+    if st.button("User Stories"):
+        st.session_state.artifacts["User Stories"] = generate_single("User Stories")
 
 # =========================
-# DISPLAY OUTPUT
+# OUTPUT TABS
 # =========================
-if st.session_state.output:
+if any(st.session_state.artifacts.values()):
+
     st.markdown("---")
-    st.markdown(st.session_state.output)
 
-# =========================
-# QUICK REFINE
-# =========================
-if st.session_state.output:
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["Executive Summary","Action Items","PRD","User Stories"]
+    )
 
-    st.subheader("Quick Refine")
+    with tab1:
+        st.markdown(st.session_state.artifacts["Executive Summary"])
 
-    r1, r2, r3, r4 = st.columns(4)
+    with tab2:
+        st.markdown(st.session_state.artifacts["Action Items"])
 
-    if r1.button("Make concise"):
-        st.session_state.output = ask_ai(
-            "Make concise:\n"+st.session_state.output)
+    with tab3:
+        st.markdown(st.session_state.artifacts["PRD"])
 
-    if r2.button("Convert to OKRs"):
-        st.session_state.output = ask_ai(
-            "Convert to OKRs:\n"+st.session_state.output)
-
-    if r3.button("Add risks"):
-        st.session_state.output = ask_ai(
-            "Add risks section:\n"+st.session_state.output)
-
-    if r4.button("Make technical"):
-        st.session_state.output = ask_ai(
-            "Make technical:\n"+st.session_state.output)
-
-    custom_refine = st.text_input("Custom refine")
-
-    if st.button("Apply Custom Refine"):
-        if custom_refine:
-            st.session_state.output = ask_ai(
-                custom_refine+"\n"+st.session_state.output)
+    with tab4:
+        st.markdown(st.session_state.artifacts["User Stories"])
 
 # =========================
 # AI SUGGESTED NEXT STEPS
@@ -176,6 +179,7 @@ if st.session_state.suggestions:
     st.subheader("🤖 AI Suggested Next Steps")
 
     for s in st.session_state.suggestions:
+
         if not s.strip():
             continue
 
