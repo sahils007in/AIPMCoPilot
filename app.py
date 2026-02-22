@@ -11,8 +11,8 @@ st.set_page_config(page_title="AI Product Manager Copilot", page_icon="🚀")
 # =========================
 if "api_valid" not in st.session_state:
     st.session_state.api_valid = False
-if "memory_output" not in st.session_state:
-    st.session_state.memory_output = ""
+if "output" not in st.session_state:
+    st.session_state.output = ""
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
@@ -20,11 +20,9 @@ if "suggestions" not in st.session_state:
 # SIDEBAR
 # =========================
 with st.sidebar:
-
     st.title("⚙️ Configuration")
 
     api_key = st.text_input("OpenAI API Key", type="password")
-
     pm_role = st.selectbox("PM Role", ["Startup PM","Growth PM","Enterprise PM"])
     output_style = st.selectbox("Output Style", ["Concise","Detailed"])
 
@@ -32,7 +30,7 @@ with st.sidebar:
     st.markdown("Built by Sahil Jain 🚀  \n[LinkedIn](https://linkedin.com)")
 
 # =========================
-# HEADER ALWAYS VISIBLE
+# HEADER (ALWAYS VISIBLE)
 # =========================
 st.title("🚀 AI Product Manager Copilot")
 st.caption("AI Workspace for Product Managers")
@@ -42,8 +40,7 @@ st.caption("AI Workspace for Product Managers")
 # =========================
 def validate_key(key):
     try:
-        client = OpenAI(api_key=key)
-        client.models.list()
+        OpenAI(api_key=key).models.list()
         return True
     except:
         return False
@@ -52,31 +49,30 @@ if api_key and not st.session_state.api_valid:
     with st.spinner("Validating API Key..."):
         st.session_state.api_valid = validate_key(api_key)
 
-# UX onboarding message
 if not api_key:
     st.warning("🔑 Enter your OpenAI API key in sidebar to begin.")
-
-elif not st.session_state.api_valid:
-    st.error("❌ Invalid API Key")
-
-else:
-    st.success("🟢 Connected to OpenAI")
-
-# =========================
-# DISABLE FEATURES IF NO KEY
-# =========================
-if not st.session_state.api_valid:
     st.stop()
+
+if not st.session_state.api_valid:
+    st.error("❌ Invalid API Key")
+    st.stop()
+
+st.success("🟢 Connected to OpenAI")
 
 client = OpenAI(api_key=api_key)
 
 # =========================
 # INPUT
 # =========================
-idea = st.text_area("Enter Product Idea")
+product_input = st.text_area(
+    "📥 Paste Product Context (Idea, Notes, Transcript, or Any Raw Input)",
+    height=200
+)
+
+st.caption("Supports ideas, meeting notes, transcripts, research inputs or unstructured text.")
 
 # =========================
-# AI FUNCTION
+# AI CALL
 # =========================
 def ask_ai(prompt):
     response = client.chat.completions.create(
@@ -86,82 +82,100 @@ def ask_ai(prompt):
     return response.choices[0].message.content
 
 # =========================
-# GENERATE ALL
+# ARTIFACT GENERATION
 # =========================
-if st.button("🚀 Generate Artifacts"):
-
-    output = ask_ai(f"""
+def generate_artifact(type_name):
+    prompt = f"""
 Act as Senior Product Manager.
 
-Generate:
-- PRD
-- User Stories
-- OKRs
-- Risks
-- Metrics
+Generate {type_name} for the following context.
 
-Idea: {idea}
 Role: {pm_role}
 Style: {output_style}
-""")
 
-    st.session_state.memory_output = output
+Context:
+{product_input}
+"""
+    result = ask_ai(prompt)
+    st.session_state.output = result
 
     suggestion_text = ask_ai(f"""
-Suggest next PM actions with confidence level (High/Medium/Low) and short why.
+Suggest next PM actions with confidence (High/Medium/Low) and short reason.
 
-Idea: {idea}
+Context:
+{product_input}
 """)
 
     st.session_state.suggestions = suggestion_text.split("\n")
 
 # =========================
-# OUTPUT DISPLAY
+# BUTTONS ROW
 # =========================
-if st.session_state.memory_output:
-    st.markdown(st.session_state.memory_output)
+col1, col2, col3, col4, col5 = st.columns(5)
+
+if col1.button("Executive Summary"):
+    generate_artifact("Executive Summary")
+
+if col2.button("Action Items"):
+    generate_artifact("Action Items")
+
+if col3.button("PRD"):
+    generate_artifact("Product Requirements Document")
+
+if col4.button("User Stories"):
+    generate_artifact("User Stories")
+
+if col5.button("🚀 Generate All"):
+    generate_artifact("Executive Summary, PRD, User Stories, OKRs, Risks and Metrics")
+
+# =========================
+# DISPLAY OUTPUT
+# =========================
+if st.session_state.output:
+    st.markdown("---")
+    st.markdown(st.session_state.output)
 
 # =========================
 # QUICK REFINE
 # =========================
-if st.session_state.memory_output:
+if st.session_state.output:
 
     st.subheader("Quick Refine")
 
-    col1,col2,col3,col4 = st.columns(4)
+    r1, r2, r3, r4 = st.columns(4)
 
-    if col1.button("Make concise"):
-        st.session_state.memory_output = ask_ai(
-            "Make concise:\n"+st.session_state.memory_output)
+    if r1.button("Make concise"):
+        st.session_state.output = ask_ai(
+            "Make concise:\n"+st.session_state.output)
 
-    if col2.button("Convert to OKRs"):
-        st.session_state.memory_output = ask_ai(
-            "Convert to OKRs:\n"+st.session_state.memory_output)
+    if r2.button("Convert to OKRs"):
+        st.session_state.output = ask_ai(
+            "Convert to OKRs:\n"+st.session_state.output)
 
-    if col3.button("Add risks"):
-        st.session_state.memory_output = ask_ai(
-            "Add risks:\n"+st.session_state.memory_output)
+    if r3.button("Add risks"):
+        st.session_state.output = ask_ai(
+            "Add risks section:\n"+st.session_state.output)
 
-    if col4.button("Make technical"):
-        st.session_state.memory_output = ask_ai(
-            "Make technical:\n"+st.session_state.memory_output)
+    if r4.button("Make technical"):
+        st.session_state.output = ask_ai(
+            "Make technical:\n"+st.session_state.output)
 
     custom_refine = st.text_input("Custom refine")
 
     if st.button("Apply Custom Refine"):
         if custom_refine:
-            st.session_state.memory_output = ask_ai(
-                custom_refine+"\n"+st.session_state.memory_output)
+            st.session_state.output = ask_ai(
+                custom_refine+"\n"+st.session_state.output)
 
 # =========================
-# AI NEXT STEPS
+# AI SUGGESTED NEXT STEPS
 # =========================
 if st.session_state.suggestions:
 
+    st.markdown("---")
     st.subheader("🤖 AI Suggested Next Steps")
 
     for s in st.session_state.suggestions:
-
         if not s.strip():
             continue
 
