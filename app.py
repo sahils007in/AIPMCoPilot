@@ -2,57 +2,43 @@ import streamlit as st
 from openai import OpenAI
 import time
 
-# ---------------- Page Config ----------------
 st.set_page_config(page_title="AI PM Copilot", page_icon="🚀", layout="wide")
 
 st.title("🚀 AI Product Manager Copilot")
 st.caption("Transform raw product thinking into structured product artifacts.")
 
-# ---------------- Session State ----------------
-if "client" not in st.session_state:
-    st.session_state.client = None
+# ---------------- SESSION STATE ----------------
+defaults = {
+    "client": None,
+    "api_key_valid": False,
+    "validated_key": None,
+    "outputs": {"summary":"","actions":"","prd":"","stories":""},
+    "active_view": "Executive Summary"
+}
 
-if "api_key_valid" not in st.session_state:
-    st.session_state.api_key_valid = False
+for k,v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "validated_key" not in st.session_state:
-    st.session_state.validated_key = None
-
-if "outputs" not in st.session_state:
-    st.session_state.outputs = {
-        "summary": "",
-        "actions": "",
-        "prd": "",
-        "stories": ""
-    }
-
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = 0
-
-# ---------------- API Validation ----------------
-def validate_openai_api_key(api_key):
+# ---------------- API VALIDATION ----------------
+def validate_openai_api_key(key):
     try:
-        test_client = OpenAI(api_key=api_key)
-        test_client.models.list()
+        OpenAI(api_key=key).models.list()
         return True
     except:
         return False
 
-# ---------------- Sidebar ----------------
+# ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.header("⚙ Configuration")
+    st.header("Configuration")
 
     api_key = st.text_input("OpenAI API Key", type="password")
 
-    role = st.selectbox(
-        "PM Role",
-        ["Startup PM", "Agile Coach", "Technical PM"]
-    )
+    role = st.selectbox("PM Role",
+        ["Startup PM","Agile Coach","Technical PM"])
 
-    tone = st.selectbox(
-        "Output Style",
-        ["Concise", "Detailed"]
-    )
+    tone = st.selectbox("Output Style",
+        ["Concise","Detailed"])
 
     if api_key and api_key != st.session_state.validated_key:
         with st.spinner("Validating API key..."):
@@ -60,7 +46,7 @@ with st.sidebar:
                 st.session_state.client = OpenAI(api_key=api_key)
                 st.session_state.api_key_valid = True
                 st.session_state.validated_key = api_key
-                st.success("✅ API key validated")
+                st.success("✅ API key valid")
             else:
                 st.session_state.api_key_valid = False
                 st.error("❌ Invalid API key")
@@ -68,25 +54,20 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Built by **Sahil Jain** 🚀")
 
-# Guard
 if not st.session_state.api_key_valid:
-    st.info("👈 Enter a valid OpenAI API key to use the Copilot.")
+    st.info("Enter valid API key to continue.")
     st.stop()
 
 client = st.session_state.client
 
-# ---------------- Input ----------------
-user_input = st.text_area(
-    "Paste meeting notes, product ideas, or transcripts",
-    height=220
-)
-
+# ---------------- INPUT ----------------
+user_input = st.text_area("Paste product idea / meeting notes", height=220)
 input_empty = not user_input.strip()
 
-# ---------------- Prompt Builder ----------------
-def build_prompt(task):
+# ---------------- PROMPT BUILDER ----------------
+def build_prompt(task, extra=None):
 
-    base_context = f"""
+    base = f"""
 You are an expert Product Manager.
 
 PM Style: {role}
@@ -96,89 +77,84 @@ Input:
 {user_input}
 """
 
-    prompts = {
-        "summary": "Create a clear executive summary with objectives and impact.",
-        "actions": "Extract clear action items with priority levels.",
-        "prd": """Create a structured Product Requirements Document:
-- Problem
-- Target Users
-- Goals
-- Success Metrics
-- Features
-- Risks""",
-        "stories": """Generate Agile user stories:
-As a...
-I want...
-So that...
-Include acceptance criteria."""
+    tasks = {
+        "summary":"Create executive summary.",
+        "actions":"Extract prioritized action items.",
+        "prd":"Create full PRD: Problem, Users, Goals, Metrics, Features, Risks.",
+        "stories":"Create Agile user stories with acceptance criteria."
     }
 
-    return base_context + "\n\nTask:\n" + prompts[task]
+    refine = f"\nRefinement request: {extra}" if extra else ""
 
-# ---------------- Generate ----------------
-def generate(task):
-    start_time = time.time()
+    return base + "\nTask:\n" + tasks[task] + refine
+
+# ---------------- GENERATE ----------------
+def generate(task, extra=None):
+    start = time.time()
 
     with st.spinner("Generating..."):
-        response = client.chat.completions.create(
+        res = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": build_prompt(task)}],
-            temperature=0.4
+            messages=[{"role":"user","content":build_prompt(task,extra)}]
         )
 
-    duration = round(time.time() - start_time, 2)
-    result = response.choices[0].message.content
+    duration = round(time.time()-start,2)
+    st.success(f"Generated in {duration}s")
 
-    st.success(f"Generated in {duration} seconds")
+    return res.choices[0].message.content
 
-    return result
-
-# ---------------- Action Buttons ----------------
-col1, col2, col3, col4 = st.columns(4)
+# ---------------- ACTION BUTTONS ----------------
+col1,col2,col3,col4 = st.columns(4)
 
 with col1:
     if st.button("Executive Summary", disabled=input_empty):
-        st.session_state.outputs["summary"] = generate("summary")
-        st.session_state.active_tab = 0
+        st.session_state.outputs["summary"]=generate("summary")
+        st.session_state.active_view="Executive Summary"
 
 with col2:
     if st.button("Action Items", disabled=input_empty):
-        st.session_state.outputs["actions"] = generate("actions")
-        st.session_state.active_tab = 1
+        st.session_state.outputs["actions"]=generate("actions")
+        st.session_state.active_view="Action Items"
 
 with col3:
     if st.button("Generate PRD", disabled=input_empty):
-        st.session_state.outputs["prd"] = generate("prd")
-        st.session_state.active_tab = 2
+        st.session_state.outputs["prd"]=generate("prd")
+        st.session_state.active_view="PRD"
 
 with col4:
     if st.button("User Stories", disabled=input_empty):
-        st.session_state.outputs["stories"] = generate("stories")
-        st.session_state.active_tab = 3
+        st.session_state.outputs["stories"]=generate("stories")
+        st.session_state.active_view="User Stories"
 
-# ---------------- Output Section ----------------
+# ---------------- OUTPUT VIEW ----------------
 st.markdown("---")
-st.subheader("Output")
+st.subheader("Workspace")
 
-tabs = st.tabs([
-    "Executive Summary",
-    "Action Items",
-    "PRD",
-    "User Stories"
-])
+views = ["Executive Summary","Action Items","PRD","User Stories"]
 
-with tabs[0]:
-    if st.session_state.outputs["summary"]:
-        st.code(st.session_state.outputs["summary"], language="markdown")
+selected = st.radio(
+    "Select Output",
+    views,
+    horizontal=True,
+    index=views.index(st.session_state.active_view)
+)
 
-with tabs[1]:
-    if st.session_state.outputs["actions"]:
-        st.code(st.session_state.outputs["actions"], language="markdown")
+output_key = {
+    "Executive Summary":"summary",
+    "Action Items":"actions",
+    "PRD":"prd",
+    "User Stories":"stories"
+}[selected]
 
-with tabs[2]:
-    if st.session_state.outputs["prd"]:
-        st.code(st.session_state.outputs["prd"], language="markdown")
+current_output = st.session_state.outputs[output_key]
 
-with tabs[3]:
-    if st.session_state.outputs["stories"]:
-        st.code(st.session_state.outputs["stories"], language="markdown")
+if current_output:
+    st.code(current_output, language="markdown")
+
+    # ---------------- ELITE FEATURE: REFINE ----------------
+    st.markdown("### Refine Output")
+    refine_text = st.text_input("Ask AI to refine this (e.g., Make concise, Convert to OKRs)")
+
+    if st.button("Refine"):
+        refined = generate(output_key, refine_text)
+        st.session_state.outputs[output_key]=refined
